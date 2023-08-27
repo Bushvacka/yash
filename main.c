@@ -8,12 +8,25 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <fcntl.h>
+#include <signal.h>
 
 int splitString(char* str, char delimiter, char*** tokens);
+
+pid_t child_pid = -1;
+
+// SIGINT
+void sigint_handler(int signum) {
+    if (child_pid != -1) {
+        // Kill the child process if it's running
+        kill(child_pid, SIGTERM);
+    }
+}
 
 int main() {
 	bool running = true;
 	char line[2000] = {0};
+
+	signal(SIGINT, sigint_handler);
 
 
 	while (running) {
@@ -37,39 +50,39 @@ int main() {
 			char** tokens;
 			int num_tokens = splitString(line, ' ', &tokens);
 
-			int cmd_end = num_tokens;
+			int cmd_length = num_tokens;
 			
 			// Check for redirection symbols
 			for (int i = 0; i < num_tokens; i++) {
 				if (strcmp(tokens[i], "<") == 0) { // Input
-					input_fd = open(tokens[i + 1], O_RDONLY, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH);
+					input_fd = open(tokens[i + 1], O_RDONLY);
 
 					if (input_fd == -1) {
 						perror("yash");
-					} else if (i < cmd_end) {
-						cmd_end = i;
+					} else if (i < cmd_length) {
+						cmd_length = i;
 					}
 				} else if (strcmp(tokens[i], ">") == 0) { // Output
 					output_fd = open(tokens[i + 1], O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH);
 					
 					if (output_fd == -1) {
 						perror("yash");
-					} else if (i < cmd_end) {
-						cmd_end = i;
+					} else if (i < cmd_length) {
+						cmd_length = i;
 					}
 				} else if (strcmp(tokens[i], "2>") == 0) { // Error
 					error_fd = open(tokens[i + 1], O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH);
 
 					if (error_fd == -1) {
 						perror("yash");
-					} else if (i < cmd_end) {
-						cmd_end = i;
+					} else if (i < cmd_length) {
+						cmd_length = i;
 					}
 				}
 			}
 
-			char** args = (char**) malloc(cmd_end * sizeof(char*));
-			for (int i = 0; i < cmd_end - 1; i++) {
+			char** args = (char**) malloc((cmd_length + 1) * sizeof(char*));
+			for (int i = 0; i < cmd_length; i++) {
 				args[i] = tokens[i];
 			}
 			args[num_tokens] = NULL;
@@ -87,7 +100,11 @@ int main() {
 
 				perror("yash");
 			} else { // Parent process
+				child_pid = pid;
+
 				wait(NULL);
+
+				child_pid = -1;
 			}
 
 			// Close file descriptors if they were changed
@@ -101,11 +118,11 @@ int main() {
 				close(error_fd);
 			}
 
-			// Free memory allocated for tokens and args
 			for (int i = 0; i < num_tokens; i++) {
 				free(tokens[i]);
 			}
 			free(tokens);
+			free(args);
 		}
 
 		memset(line, 0, sizeof(line)); // Clear previous command
