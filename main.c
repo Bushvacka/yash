@@ -16,15 +16,11 @@ char** parseCommand(char** tokens, int num_tokens, int* input_fd, int* output_fd
 
 int splitString(char* str, const char* delimiter, char*** tokens);
 
-pid_t child_pid = -1;
+void sigint_handler(int signum);
 
-// SIGINT
-void sigint_handler(int signum) {
-    if (child_pid != -1) {
-        // Kill the child process if it's running
-        kill(child_pid, SIGTERM);
-    }
-}
+void sigtstp_handler(int signum);
+
+pid_t child_pid = -1;
 
 int main() {
 	// Assign signal handlers
@@ -190,4 +186,11 @@ int splitString(char* str, const char* delimiter, char*** tokens) {
     }
 
     return num_tokens;
+}
+
+void sigint_handler(int signum) {
+    if (child_pid != -1) {
+        // Kill the child process if it's running
+        kill(child_pid, SIGINT);
+    }
 }
