@@ -16,16 +16,14 @@ char** parseCommand(char** tokens, int num_tokens, int* input_fd, int* output_fd
 
 int splitString(char* str, const char* delimiter, char*** tokens);
 
-void sigint_handler(int signum);
-
-void sigtstp_handler(int signum);
+void signalHandler(int signum);
 
 pid_t child_pid = -1;
 
 int main() {
 	// Assign signal handlers
-	signal(SIGINT, sigint_handler);
-	// signal(SIGTSTP, sigint_handler);
+	signal(SIGINT, signalHandler);
+	signal(SIGTSTP, signalHandler);
 
 	const char whitespace[2] = " ";
 	const char pipechar[2] = "|";
@@ -37,7 +35,7 @@ int main() {
 		printf("# "); // Print shell prompt
 		fgets(line, sizeof(line), stdin); // Get a line from the user
 		
-		if (line[0] == 0) { // Catch EOF characters
+		if (line[0] == '\0') { // Catch EOF characters
 			running = false;
 		} else {
 			// Remove newline character from the end of the line
@@ -86,41 +84,6 @@ int main() {
 	}
 }
 
-void executeCommand(char** args, int input_fd, int output_fd, int error_fd) {
-	pid_t pid = fork();
-	if (pid == -1) {
-		perror("yash");
-	} else if (pid == 0) { // Child process
-		// Redirect file descriptors
-		dup2(input_fd, STDIN_FILENO);
-		dup2(output_fd, STDOUT_FILENO);
-		dup2(error_fd, STDERR_FILENO);
-
-		// Execute command
-		execvp(args[0], args);
-
-		// If this point has been reached an error has occurred
-		perror("yash");
-	} else { // Parent process
-		child_pid = pid;
-
-		wait(NULL);
-
-		child_pid = -1;
-	}
-
-	// Close file descriptors if they were changed
-	if (input_fd != STDIN_FILENO) {
-		close(input_fd);
-	}
-	if (output_fd != STDOUT_FILENO) {
-		close(output_fd);
-	}
-	if (error_fd != STDERR_FILENO) {
-		close(error_fd);
-	}
-}
-
 char** parseCommand(char** tokens, int num_tokens, int* input_fd, int* output_fd, int* error_fd) {
 	int cmd_length = num_tokens;
 
@@ -163,6 +126,41 @@ char** parseCommand(char** tokens, int num_tokens, int* input_fd, int* output_fd
 	return args;
 }
 
+void executeCommand(char** args, int input_fd, int output_fd, int error_fd) {
+	pid_t pid = fork();
+	if (pid == -1) {
+		perror("yash");
+	} else if (pid == 0) { // Child process
+		// Redirect file descriptors
+		dup2(input_fd, STDIN_FILENO);
+		dup2(output_fd, STDOUT_FILENO);
+		dup2(error_fd, STDERR_FILENO);
+
+		// Execute command
+		execvp(args[0], args);
+
+		// If this point has been reached an error has occurred
+		perror("yash");
+	} else { // Parent process
+		child_pid = pid;
+
+		waitpid(pid, NULL, WUNTRACED);
+
+		child_pid = -1;
+	}
+
+	// Close file descriptors if they were changed
+	if (input_fd != STDIN_FILENO) {
+		close(input_fd);
+	}
+	if (output_fd != STDOUT_FILENO) {
+		close(output_fd);
+	}
+	if (error_fd != STDERR_FILENO) {
+		close(error_fd);
+	}
+}
+
 int splitString(char* str, const char* delimiter, char*** tokens) {
     int num_tokens = 0;
 
@@ -188,9 +186,10 @@ int splitString(char* str, const char* delimiter, char*** tokens) {
     return num_tokens;
 }
 
-void sigint_handler(int signum) {
-    if (child_pid != -1) {
-        // Kill the child process if it's running
+void signalHandler(int signum) {
+	if (signum == SIGINT && child_pid != -1) {
         kill(child_pid, SIGINT);
-    }
+	} else if (signum == SIGTSTP && child_pid != -1) {
+		kill(child_pid, SIGTSTP);
+	}
 }
