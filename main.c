@@ -176,41 +176,6 @@ Job parseLine(char* line) {
 	return job;
 }
 
-void executeCommand(char** args, int input_fd, int output_fd, int error_fd) {
-	pid_t pid = fork();
-	if (pid == -1) {
-		perror("yash");
-	} else if (pid == 0) { // Child process
-		// Redirect file descriptors
-		dup2(input_fd, STDIN_FILENO);
-		dup2(output_fd, STDOUT_FILENO);
-		dup2(error_fd, STDERR_FILENO);
-
-		// Execute command
-		execvp(args[0], args);
-
-		// If this point has been reached an error has occurred
-		perror("yash");
-	} else { // Parent process
-		child_pid = pid;
-
-		waitpid(pid, NULL, WUNTRACED);
-
-		child_pid = -1;
-	}
-
-	// Close file descriptors if they were changed
-	if (input_fd != STDIN_FILENO) {
-		close(input_fd);
-	}
-	if (output_fd != STDOUT_FILENO) {
-		close(output_fd);
-	}
-	if (error_fd != STDERR_FILENO) {
-		close(error_fd);
-	}
-}
-
 int splitString(char* str, const char* delimiter, char*** tokens) {
     int num_tokens = 0;
 
