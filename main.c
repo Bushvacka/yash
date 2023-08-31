@@ -1,3 +1,5 @@
+#define _XOPEN_SOURCE 700
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
@@ -13,12 +15,16 @@
 #define MAX_JOBS 20
 #define MAX_LINE_LENGTH 200
 
+char running[] = "Running";
+char stopped[] = "Stopped";
+char done[] = "Done";
+
 typedef struct
 {
 	// Job information
 	pid_t pgid;
 	bool foreground;
-	bool status; // Running or Stopped
+	char* status; // Running, Stopped, Done
 	char command[MAX_LINE_LENGTH];
 
 	// Process information
@@ -36,59 +42,68 @@ int splitString(char* str, const char* delimiter, char*** tokens);
 
 void executeJob(Job job);
 
-void signalHandler(int signum);
+void freeJob(Job job);
+
+void printJobTable();
+
+// Foreground job
+pid_t fg_pid = -1;
+Job fg_job;
 
 
-pid_t child_pid = -1;
+// Background jobs
+Job jobs[MAX_JOBS];
+int job_index = 0;
 
 int main() {
-	// Assign signal handlers
-	signal(SIGINT, signalHandler);
-	signal(SIGTSTP, signalHandler);
-
-	const char whitespace[2] = " ";
-	const char pipechar[2] = "|";
-
-	bool running = true;
 	char line[MAX_LINE_LENGTH] = {0};
 
-	while (running) {
+	bool done = false;
+
+	while (!done) {
 		printf("# "); // Print shell prompt
 		fgets(line, sizeof(line), stdin); // Get a line from the user
 		
 		if (line[0] == '\0') { // Catch EOF characters
-			running = false;
+			done = true;
 		} else {
-			Job job = parseLine(line);
-			
-			executeJob(job);
-
-			// Free job commands
-			for (int i = 0; i < job.num_commands; i++) {
-				for (int j = 0; j < job.command_length[i]; j++) {
-					free(job.commands[i][j]);
+			// Remove newline character from the end of the line
+			for (int i = 0; line[i]; i++) {
+				if (line[i] == '\n' && line[i + 1] == '\0') {
+					line[i--] = '\0';
 				}
-				free(job.commands[i]);
+			}
+
+			if (strcmp(line, "fg") == 0) {
+				kill(jobs[job_index - 1].pgid, SIGCONT);
+				jobs[job_index - 1].status = running;
+			} else if (strcmp(line, "bg") == 0) {
+
+			} else if (strcmp(line, "jobs") == 0) {
+				printJobTable();
+			} else { // General POSIX command
+				Job job = parseLine(line);
+				
+				executeJob(job);
+
 			}
 		}
 
 		memset(line, 0, sizeof(line)); // Clear previous command
+	}
+
+	// Free all jobs
+	for (int i = 0; i < job_index; i++) {
+		freeJob(jobs[i]);
 	}
 }
 
 Job parseLine(char* line) {
 	Job job;
 
+	strcpy(job.command, line); // Store line for job table display
+	job.status = running;
 	job.foreground = true;
-	job.status = true;
-	strcpy(job.command, line);
-
-	// Remove newline character from the end of the line
-	for (int i = 0; line[i]; i++) {
-		if (line[i] == '\n' && line[i + 1] == '\0') {
-			line[i--] = '\0';
-		}
-	}
 
 	// Check for an '&' indicating a background process
 	for (int i = 0; line[i]; i++) {
@@ -126,7 +141,7 @@ Job parseLine(char* line) {
 				job.input_fd[i] = open(command_tokens[j + 1], O_RDONLY);
 
 				if (job.input_fd[i] == -1) {
-					perror("yash");
+					perror("input");
 				} else if (j < cmd_length) {
 					cmd_length = j;
 				}
@@ -134,7 +149,7 @@ Job parseLine(char* line) {
 				job.output_fd[i] = open(command_tokens[j + 1], O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH);
 				
 				if (job.output_fd[i] == -1) {
-					perror("yash");
+					perror("output");
 				} else if (j < cmd_length) {
 					cmd_length = j;
 				}
@@ -142,7 +157,7 @@ Job parseLine(char* line) {
 				job.error_fd[i] = open(command_tokens[j + 1], O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH);
 
 				if (job.error_fd[i] == -1) {
-					perror("yash");
+					perror("error");
 				} else if (j < cmd_length) {
 					cmd_length = j;
 				}
@@ -205,9 +220,24 @@ void executeJob(Job job) {
 	for (int i = 0; i < job.num_commands; i++) {
 		pid_t pid = fork();
 
-		if (pid == -1) {
-			perror("yash");
-		} else if (pid == 0) { // Child process
+		if (pid == -1) { // Catch fork errors
+			perror("fork");
+			return;
+		} 
+
+		if (i == 0) { // Save job pgid
+			job.pgid = pid;
+		}
+
+		if (pid == 0) { // Child Process
+			if (i == 0) { // First command
+				setpgid(0, 0); // Create a process group
+			} else { // Second command
+				setpgid(0, job.pgid); // Join the process group
+			}
+
+			// printf("Process Group: %d\n", getpgrp());
+
 			// Redirect file descriptors
 			dup2(job.input_fd[i], STDIN_FILENO);
 			dup2(job.output_fd[i], STDOUT_FILENO);
@@ -216,35 +246,65 @@ void executeJob(Job job) {
 			// Execute command
 			execvp(job.commands[i][0], job.commands[i]);
 
-			// If this point has been reached an error has occurred
-			perror("yash");
+			// Execvp does not return when successful
+			perror("exec");
+			exit(1);
 		} else { // Parent process
-			child_pid = pid;
+			if (i + 1 == job.num_commands) { // Final command
+				if (job.foreground) {
+					// Save foreground process information
+					fg_job = job;
+					fg_pid = job.pgid;
 
-			waitpid(pid, NULL, WUNTRACED);
+					signal(SIGTTOU, SIG_IGN);
 
-			child_pid = -1;
+					// Give control of the terminal to the child process
+					tcsetpgrp(STDIN_FILENO, job.pgid);
+
+					pid_t status = waitpid(job.pgid, NULL, WUNTRACED);
+
+					// printf("Status: %d\n", status);
+
+					// Return control of the terminal to the shell
+					tcsetpgrp(STDIN_FILENO, getpgrp());
+
+					// Mark foreground process as completed
+					fg_pid = -1;
+					freeJob(fg_job);
+
+					// Close file descriptors if they were changed
+					for (int i = 0; i < job.num_commands; i++) {
+						if (job.input_fd[i] != STDIN_FILENO) {
+							close(job.input_fd[i]);
+						}
+						if (job.output_fd[i] != STDOUT_FILENO) {
+							close(job.output_fd[i]);
+						}
+						if (job.error_fd[i] != STDERR_FILENO) {
+							close(job.error_fd[i]);
+						}
+					}
+
+				} else { // Background
+					jobs[job_index++] = job; // Add to job table
+				}  
+			}
 		}
 
-		// Close file descriptors if they were changed
-		if (job.input_fd[i] != STDIN_FILENO) {
-			close(job.input_fd[i]);
-		}
-		if (job.output_fd[i] != STDOUT_FILENO) {
-			close(job.output_fd[i]);
-		}
-		if (job.error_fd[i] != STDERR_FILENO) {
-			close(job.error_fd[i]);
-		}
 	}
 }
 
-void signalHandler(int signum) {
-    if (child_pid == -1) {
-		return;
-    }
+void freeJob(Job job) {
+	for (int i = 0; i < job.num_commands; i++) {
+		for (int j = 0; j < job.command_length[i]; j++) {
+			free(job.commands[i][j]);
+		}
+		free(job.commands[i]);
+	}
+}
 
-	if (signum == SIGINT || signum == SIGTSTP) {
-		kill(child_pid, signum);
+void printJobTable() {
+	for (int i = 0; i < job_index; i++) {
+		printf("[%d] %c %s %-10s\n", i + 1, (i + 1 == job_index) ? '+' : '-', jobs[i].status, jobs[i].command);
 	}
 }
