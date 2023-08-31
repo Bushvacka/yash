@@ -1,12 +1,9 @@
-# CMake Files
-CMakeCache.txt  
-CMakeFiles  
-cmake_install.cmake  
-Makefile
-build/
-
 # VSCode Files
 .vscode/
 
+# Make Files
+build/
+MakeFile
+
 # Binaries
-main
+yash
