@@ -34,12 +34,16 @@ int getMaxJobNumber();
 
 int getMostRecentStoppedJob();
 
-void bringJobToForeground(Job job);
+void bringJobToForeground(int job_index);
 
-void resumeStoppedJob(Job job);
+void resumeStoppedJob(int job_index);
 
 void printJobTable();
 
 void printJob();
+
+void cullJobs();
+
+void removeJob(int job_index);
 
 #endif

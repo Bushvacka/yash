@@ -19,7 +19,7 @@ char done[] = "Done";
 
 // Background jobs
 Job jobs[MAX_JOBS];
-int job_index = 0;
+int num_jobs = 0;
 
 int main() {
 	char line[MAX_LINE_LENGTH] = {0};
@@ -41,10 +41,20 @@ int main() {
 			}
 
 			if (strcmp(line, "fg") == 0) {
-				bringJobToForeground(jobs[job_index - 1]);
+				if (num_jobs > 0) {
+					cullJobs();
+					bringJobToForeground(num_jobs - 1);
+				}
 			} else if (strcmp(line, "bg") == 0) {
-				resumeStoppedJob()
+				cullJobs();
+				int stopped_job_index = getMostRecentStoppedJob();
+
+				if (stopped_job_index != -1) {
+					resumeStoppedJob(stopped_job_index);
+				}
+
 			} else if (strcmp(line, "jobs") == 0) {
+				cullJobs();
 				printJobTable();
 			} else { // General POSIX command
 				Job job = parseLine(line);
@@ -58,7 +68,7 @@ int main() {
 	}
 
 	// Free all jobs
-	for (int i = 0; i < job_index; i++) {
+	for (int i = 0; i < num_jobs; i++) {
 		freeJob(jobs[i]);
 	}
 }
@@ -111,7 +121,7 @@ Job parseLine(char* line) {
 					cmd_length = j;
 				}
 			} else if (strcmp(command_tokens[j], ">") == 0) { // Output
-				job.output_fd[i] = open(command_tokens[j + 1], O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH);
+				job.output_fd[i] = open(command_tokens[j + 1], O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH);
 				
 				if (job.output_fd[i] == -1) {
 					perror("output");
@@ -119,7 +129,7 @@ Job parseLine(char* line) {
 					cmd_length = j;
 				}
 			} else if (strcmp(command_tokens[j], "2>") == 0) { // Error
-				job.error_fd[i] = open(command_tokens[j + 1], O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH);
+				job.error_fd[i] = open(command_tokens[j + 1], O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH);
 
 				if (job.error_fd[i] == -1) {
 					perror("error");
@@ -201,8 +211,6 @@ void executeJob(Job job) {
 				setpgid(0, job.pgid); // Join the process group
 			}
 
-			// printf("Process Group: %d\n", getpgrp());
-
 			// Redirect file descriptors
 			dup2(job.input_fd[i], STDIN_FILENO);
 			dup2(job.output_fd[i], STDOUT_FILENO);
@@ -222,12 +230,16 @@ void executeJob(Job job) {
 
 					// Give control of the terminal to the child process
 					tcsetpgrp(STDIN_FILENO, job.pgid);
+					tcsetpgrp(STDOUT_FILENO, job.pgid);
+					tcsetpgrp(STDERR_FILENO, job.pgid);
 
-					pid_t status;
-					waitpid(job.pgid, &status, WUNTRACED);
+					int status;
+					waitpid(-job.pgid, &status, WUNTRACED);
 
 					// Return control of the terminal to the shell
 					tcsetpgrp(STDIN_FILENO, getpgrp());
+					tcsetpgrp(STDOUT_FILENO, getpgrp());
+					tcsetpgrp(STDERR_FILENO, getpgrp());
 
 					if (WIFEXITED(status)) { // Proess exited normally
 						freeJob(job); // Free job memory
@@ -245,14 +257,14 @@ void executeJob(Job job) {
 							}
 						}
 					} else if (WIFSTOPPED(status)) { // Process was stopped
-						job.job_number = job_index;
+						job.job_number = num_jobs;
 						job.status = stopped;
-						jobs[job_index++] = job; // Add to job table
+						jobs[num_jobs++] = job; // Add to job table
 					}
 
 				} else { // Background
-					job.job_number = job_index;
-					jobs[job_index++] = job; // Add to job table
+					job.job_number = num_jobs;
+					jobs[num_jobs++] = job; // Add to job table
 				}  
 			}
 		}
@@ -272,7 +284,7 @@ void freeJob(Job job) {
 
 int getMaxJobNumber() {
 	int max = -1;
-	for (int i = 0; i < job_index; i++) {
+	for (int i = 0; i < num_jobs; i++) {
 		if (jobs[i].job_number > max) {
 			max = jobs[i].job_number;
 		}
@@ -280,7 +292,9 @@ int getMaxJobNumber() {
 	return max;
 }
 
-void bringJobToForeground(Job job) {
+void bringJobToForeground(int job_index) {
+	Job job = jobs[job_index];
+
 	printf("%s\n", job.command); // Print command to terminal
 
 	job.status = running; // Update job status
@@ -289,16 +303,20 @@ void bringJobToForeground(Job job) {
 
 	// Give control of the terminal to the process
 	tcsetpgrp(STDIN_FILENO, job.pgid);
+	// tcsetpgrp(STDOUT_FILENO, job.pgid);
+	// tcsetpgrp(STDERR_FILENO, job.pgid);
 
-	pid_t status;
-	waitpid(job.pgid, &status, WUNTRACED);
+	int status;
+	waitpid(-job.pgid, &status, WUNTRACED);
 
 	// Return control of the terminal to the shell
 	tcsetpgrp(STDIN_FILENO, getpgrp());
+	// tcsetpgrp(STDOUT_FILENO, getpgrp());
+	// tcsetpgrp(STDERR_FILENO, getpgrp());
 
 	if (WIFEXITED(status)) { // Proess exited normally
 		freeJob(job); // Free job memory
-		job_index -= 1; // Remove job 
+		num_jobs -= 1; // Remove job 
 
 		// Close file descriptors if they were changed
 		for (int i = 0; i < job.num_commands; i++) {
@@ -317,10 +335,16 @@ void bringJobToForeground(Job job) {
 	}
 }
 
+void resumeStoppedJob(int job_index) {
+	printf("%s &\n", jobs[job_index].command); // Print command to terminal with & at end
 
+	jobs[job_index].status = running; // Update job status
+
+	kill(jobs[job_index].pgid, SIGCONT); // Send continue signal to process group
+}
 
 int getMostRecentStoppedJob() {
-	for (int i = job_index; i >= 0; i--) {
+	for (int i = num_jobs; i >= 0; i--) {
 		if (jobs[i].status == stopped) {
 			return i;
 		}
@@ -329,15 +353,39 @@ int getMostRecentStoppedJob() {
 }
 
 void printJobTable() {
-	for (int i = 0; i < job_index; i++) {
+	for (int i = 0; i < num_jobs; i++) {
 		printJob(jobs[i]);
 	}
 }
 
 void printJob(Job job) {
-	printf("[%d] %c %s %-10s\n", job.job_number, (job.job_number + 1 == job_index) ? '+' : '-', job.status, job.command);
+	printf("[%d] %c %s %-10s\n", job.job_number, (job.job_number + 1 == num_jobs) ? '+' : '-', job.status, job.command);
 }
 
-void removeJob(int index) {
-	if ()
+void removeJob(int job_index) {
+	for (int i = job_index; i < num_jobs - 1; i++) {
+		jobs[i] = jobs[i + 1];
+	}
+	num_jobs--;
+}
+
+void cullJobs() {
+	// Remove any finished jobs from the background
+	for (int i = num_jobs - 1; i >= 0; i--) {
+		Job job = jobs[i];
+
+		if (job.status == running)  {
+			int status;
+			int result = waitpid(-job.pgid, &status, WNOHANG);
+
+			if (result == -1) {
+				perror("waitpid");
+			} else if (result != 0) {
+				if (WIFEXITED(status)) {
+					freeJob(job);
+					removeJob(i);
+				}
+			}
+		}
+	}
 }
