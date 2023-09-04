@@ -42,7 +42,7 @@ void printJobTable();
 
 void printJob();
 
-void cullJobs();
+void updateJobList();
 
 void removeJob(int job_index);
 

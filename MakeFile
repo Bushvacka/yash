@@ -1,0 +1,4 @@
+default_target: yash
+
+yash: yash.c yash.h
+	gcc yash.c -o yash

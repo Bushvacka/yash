@@ -40,27 +40,25 @@ int main() {
 				}
 			}
 
+			// Handle terminated processes
+			updateJobList();
+
 			if (strcmp(line, "fg") == 0) {
-				if (num_jobs > 0) {
-					cullJobs();
-					bringJobToForeground(num_jobs - 1);
-				}
+				bringJobToForeground(num_jobs - 1);
 			} else if (strcmp(line, "bg") == 0) {
-				cullJobs();
 				int stopped_job_index = getMostRecentStoppedJob();
+
+				printf("Resuming Job %d\nNum Jobs: %d\n", stopped_job_index, num_jobs);
 
 				if (stopped_job_index != -1) {
 					resumeStoppedJob(stopped_job_index);
 				}
 
 			} else if (strcmp(line, "jobs") == 0) {
-				cullJobs();
 				printJobTable();
 			} else { // General POSIX command
 				Job job = parseLine(line);
-				
 				executeJob(job);
-
 			}
 		}
 
@@ -216,6 +214,20 @@ void executeJob(Job job) {
 			dup2(job.output_fd[i], STDOUT_FILENO);
 			dup2(job.error_fd[i], STDERR_FILENO);
 
+			// Close unused file descriptors
+			if (job.num_commands == 2) {
+				int j = (i == 0) ? 1 : 0; // Choose other command
+
+				if (job.input_fd[j] != STDIN_FILENO) {
+					close(job.input_fd[j]);
+				}
+				if (job.output_fd[j] != STDOUT_FILENO) {
+					close(job.output_fd[j]);
+				}
+				if (job.error_fd[j] != STDERR_FILENO) {
+					close(job.error_fd[j]);
+				}
+			}
 			// Execute command
 			execvp(job.commands[i][0], job.commands[i]);
 
@@ -225,6 +237,19 @@ void executeJob(Job job) {
 		} else { // Parent process
 			if (i + 1 == job.num_commands) { // Final command
 				if (job.foreground) {
+					// Close file descriptors if they were changed
+					for (int j = 0; j < job.num_commands; j++) {
+						if (job.input_fd[j] != STDIN_FILENO) {
+							close(job.input_fd[j]);
+						}
+						if (job.output_fd[j] != STDOUT_FILENO) {
+							close(job.output_fd[j]);
+						}
+						if (job.error_fd[j] != STDERR_FILENO) {
+							close(job.error_fd[j]);
+						}
+					}
+
 					// Ignore SIGTTOU signal (Sent when terminal control is transferred)
 					signal(SIGTTOU, SIG_IGN);
 
@@ -234,7 +259,7 @@ void executeJob(Job job) {
 					tcsetpgrp(STDERR_FILENO, job.pgid);
 
 					int status;
-					waitpid(-job.pgid, &status, WUNTRACED);
+					waitpid(job.pgid, &status, WUNTRACED);
 
 					// Return control of the terminal to the shell
 					tcsetpgrp(STDIN_FILENO, getpgrp());
@@ -243,27 +268,14 @@ void executeJob(Job job) {
 
 					if (WIFEXITED(status)) { // Proess exited normally
 						freeJob(job); // Free job memory
-
-						// Close file descriptors if they were changed
-						for (int i = 0; i < job.num_commands; i++) {
-							if (job.input_fd[i] != STDIN_FILENO) {
-								close(job.input_fd[i]);
-							}
-							if (job.output_fd[i] != STDOUT_FILENO) {
-								close(job.output_fd[i]);
-							}
-							if (job.error_fd[i] != STDERR_FILENO) {
-								close(job.error_fd[i]);
-							}
-						}
 					} else if (WIFSTOPPED(status)) { // Process was stopped
-						job.job_number = num_jobs;
+						job.job_number = num_jobs + 1;
 						job.status = stopped;
 						jobs[num_jobs++] = job; // Add to job table
 					}
 
 				} else { // Background
-					job.job_number = num_jobs;
+					job.job_number = num_jobs + 1;
 					jobs[num_jobs++] = job; // Add to job table
 				}  
 			}
@@ -283,16 +295,20 @@ void freeJob(Job job) {
 
 
 int getMaxJobNumber() {
-	int max = -1;
+	int max_job_number = -1;
 	for (int i = 0; i < num_jobs; i++) {
-		if (jobs[i].job_number > max) {
-			max = jobs[i].job_number;
+		if (jobs[i].job_number > max_job_number) {
+			max_job_number = jobs[i].job_number;
 		}
 	}
-	return max;
+	return max_job_number;
 }
 
 void bringJobToForeground(int job_index) {
+	if (job_index < 0) {
+		return;
+	}
+
 	Job job = jobs[job_index];
 
 	printf("%s\n", job.command); // Print command to terminal
@@ -303,16 +319,16 @@ void bringJobToForeground(int job_index) {
 
 	// Give control of the terminal to the process
 	tcsetpgrp(STDIN_FILENO, job.pgid);
-	// tcsetpgrp(STDOUT_FILENO, job.pgid);
-	// tcsetpgrp(STDERR_FILENO, job.pgid);
+	tcsetpgrp(STDOUT_FILENO, job.pgid);
+	tcsetpgrp(STDERR_FILENO, job.pgid);
 
 	int status;
-	waitpid(-job.pgid, &status, WUNTRACED);
+	waitpid(job.pgid, &status, WUNTRACED);
 
 	// Return control of the terminal to the shell
 	tcsetpgrp(STDIN_FILENO, getpgrp());
-	// tcsetpgrp(STDOUT_FILENO, getpgrp());
-	// tcsetpgrp(STDERR_FILENO, getpgrp());
+	tcsetpgrp(STDOUT_FILENO, getpgrp());
+	tcsetpgrp(STDERR_FILENO, getpgrp());
 
 	if (WIFEXITED(status)) { // Proess exited normally
 		freeJob(job); // Free job memory
@@ -336,7 +352,7 @@ void bringJobToForeground(int job_index) {
 }
 
 void resumeStoppedJob(int job_index) {
-	printf("%s &\n", jobs[job_index].command); // Print command to terminal with & at end
+	printf("[%d]+ %s &\n", jobs[job_index].job_number, jobs[job_index].command); // Print command to terminal with & at end
 
 	jobs[job_index].status = running; // Update job status
 
@@ -344,7 +360,7 @@ void resumeStoppedJob(int job_index) {
 }
 
 int getMostRecentStoppedJob() {
-	for (int i = num_jobs; i >= 0; i--) {
+	for (int i = num_jobs - 1; i >= 0; i--) {
 		if (jobs[i].status == stopped) {
 			return i;
 		}
@@ -359,7 +375,7 @@ void printJobTable() {
 }
 
 void printJob(Job job) {
-	printf("[%d] %c %s %-10s\n", job.job_number, (job.job_number + 1 == num_jobs) ? '+' : '-', job.status, job.command);
+	printf("[%d]%c %s %-10s\n", job.job_number, job.job_number == getMaxJobNumber() ? '+' : '-', job.status, job.command);
 }
 
 void removeJob(int job_index) {
@@ -369,23 +385,29 @@ void removeJob(int job_index) {
 	num_jobs--;
 }
 
-void cullJobs() {
-	// Remove any finished jobs from the background
-	for (int i = num_jobs - 1; i >= 0; i--) {
-		Job job = jobs[i];
-
-		if (job.status == running)  {
+void updateJobList() {
+	// Mark terminated jobs as done
+	for (int i = 0; i < num_jobs; i++) {
+		if (jobs[i].status == running)  {
 			int status;
-			int result = waitpid(-job.pgid, &status, WNOHANG);
+			int result = waitpid(jobs[i].pgid, &status, WNOHANG);
 
 			if (result == -1) {
 				perror("waitpid");
 			} else if (result != 0) {
-				if (WIFEXITED(status)) {
-					freeJob(job);
-					removeJob(i);
+				if (WIFEXITED(status)) { // Update status and print job to the terminal
+					jobs[i].status = done;
+					printJob(jobs[i]);
 				}
 			}
+		}
+	}
+
+	// Remove any finished jobs
+	for (int i = num_jobs - 1; i >= 0; i--) {
+		if (jobs[i].status == done) {
+			freeJob(jobs[i]);
+			removeJob(i);
 		}
 	}
 }
