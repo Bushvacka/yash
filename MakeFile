@@ -1,4 +1,0 @@
-default_target: yash
-
-yash: yash.c yash.h
-	c99 yash.c -o yash

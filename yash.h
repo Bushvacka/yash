@@ -59,4 +59,7 @@ void freeJob(Job job);
 // Remove a job from the job table
 void removeJob(int job_index);
 
+
+// Declare kill to avoid compiler warning
+int kill( pid_t pid, int sig );
 #endif
