@@ -26,7 +26,7 @@ int main()
 	signal(SIGINT, SIG_IGN);
 	signal(SIGTSTP, SIG_IGN);
 
-	char line[MAX_LINE_LENGTH] = {0};
+	char line[MAX_LINE_LENGTH + 1] = {0};
 
 	bool done = false;
 
@@ -177,7 +177,7 @@ Job parseLine(char *line)
 		job.commands[i] = (char **)malloc((cmd_length + 1) * sizeof(char *));
 		for (int j = 0; j < cmd_length; j++)
 		{
-			job.commands[i][j] = (char *)malloc(strlen(command_tokens[j]) * sizeof(char));
+			job.commands[i][j] = (char *)malloc(strlen(command_tokens[j]) + 1);
 			strcpy(job.commands[i][j], command_tokens[j]);
 		}
 		job.commands[i][cmd_length] = NULL;
@@ -207,7 +207,7 @@ int splitString(char *str, const char *delimiter, char ***tokens)
 	int num_tokens = 0;
 
 	// Allocate an array to store tokens
-	*tokens = (char **)malloc(sizeof(char *));
+	*tokens = (char**)malloc(sizeof(char *));
 
 	// Get first token
 	char *token = strtok(str, delimiter);
@@ -330,12 +330,12 @@ void executeJob(Job job)
 					tcsetpgrp(STDOUT_FILENO, getpgrp());
 					tcsetpgrp(STDERR_FILENO, getpgrp());
 
-					if (WIFEXITED(status))
-					{				  // Proess exited normally
+					if (WIFEXITED(status) || (WIFSIGNALED(status) && WTERMSIG(status) == SIGINT)) // Process exited normally or was stopped by Ctrl+C
+					{
 						freeJob(job); // Free job memory
 					}
-					else if (WIFSTOPPED(status))
-					{ // Process was stopped
+					else if (WIFSTOPPED(status) && WSTOPSIG(status) == SIGTSTP) // Process was stopped by Ctrl+Z
+					{
 						job.job_number = getMaxJobNumber() + 1;
 						job.status = stopped;
 						jobs[num_jobs++] = job; // Add to job table
@@ -353,7 +353,7 @@ void executeJob(Job job)
 
 int getMaxJobNumber()
 {
-	int max_job_number = -1;
+	int max_job_number = 0;
 	for (int i = 0; i < num_jobs; i++)
 	{
 		if (jobs[i].job_number > max_job_number)
@@ -392,30 +392,14 @@ void bringJobToForeground(int job_index)
 	tcsetpgrp(STDOUT_FILENO, getpgrp());
 	tcsetpgrp(STDERR_FILENO, getpgrp());
 
-	if (WIFEXITED(status))
-	{				   // Proess exited normally
-		freeJob(job);  // Free job memory
-		num_jobs -= 1; // Remove job
-
-		// Close file descriptors if they were changed
-		for (int i = 0; i < job.num_commands; i++)
-		{
-			if (job.input_fd[i] != STDIN_FILENO)
-			{
-				close(job.input_fd[i]);
-			}
-			if (job.output_fd[i] != STDOUT_FILENO)
-			{
-				close(job.output_fd[i]);
-			}
-			if (job.error_fd[i] != STDERR_FILENO)
-			{
-				close(job.error_fd[i]);
-			}
-		}
+	if (WIFEXITED(status) || (WIFSIGNALED(status) && WTERMSIG(status) == SIGINT)) // Process exited normally or was stopped by Ctrl+C
+	{
+		// Free job memory and remove from the job list
+		freeJob(jobs[job_index]);
+		removeJob(job_index);
 	}
-	else if (WIFSTOPPED(status))
-	{ // Process was stopped
+	else if (WIFSTOPPED(status) && WSTOPSIG(status) == SIGTSTP) // Process was stopped by Ctrl+Z
+	{
 		job.status = stopped;
 	}
 }

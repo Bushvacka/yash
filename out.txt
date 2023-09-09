@@ -1,0 +1,5 @@
+MakeFile
+out.txt
+yash
+yash.c
+yash.h

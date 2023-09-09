@@ -11,7 +11,7 @@ typedef struct
 	bool foreground;
 	int job_number;
 	char *status; // Running, Stopped, Done
-	char command[MAX_LINE_LENGTH];
+	char command[MAX_LINE_LENGTH + 1];
 
 	// Process information
 	int num_commands;
