@@ -207,7 +207,7 @@ int splitString(char *str, const char *delimiter, char ***tokens)
 	int num_tokens = 0;
 
 	// Allocate an array to store tokens
-	*tokens = (char**)malloc(sizeof(char *));
+	*tokens = (char **)malloc(sizeof(char *));
 
 	// Get first token
 	char *token = strtok(str, delimiter);
@@ -284,36 +284,44 @@ void executeJob(Job job)
 					close(job.error_fd[j]);
 				}
 			}
+
 			// Execute command
 			execvp(job.commands[i][0], job.commands[i]);
 
-			// Execvp does not return when successful
-			perror("exec");
+			// If this point is reached - execvp failed
+
+			// Free job memory and exit
+			for (int j = 0; j < num_jobs; j++)
+			{
+				freeJob(jobs[j]);
+			}
+			freeJob(job);
+
 			exit(1);
 		}
 		else
 		{ // Parent process
 			if (i + 1 == job.num_commands)
 			{ // Final command
+				// Close file descriptors if they were changed
+				for (int j = 0; j < job.num_commands; j++)
+				{
+					if (job.input_fd[j] != STDIN_FILENO)
+					{
+						close(job.input_fd[j]);
+					}
+					if (job.output_fd[j] != STDOUT_FILENO)
+					{
+						close(job.output_fd[j]);
+					}
+					if (job.error_fd[j] != STDERR_FILENO)
+					{
+						close(job.error_fd[j]);
+					}
+				}
+
 				if (job.foreground)
 				{
-					// Close file descriptors if they were changed
-					for (int j = 0; j < job.num_commands; j++)
-					{
-						if (job.input_fd[j] != STDIN_FILENO)
-						{
-							close(job.input_fd[j]);
-						}
-						if (job.output_fd[j] != STDOUT_FILENO)
-						{
-							close(job.output_fd[j]);
-						}
-						if (job.error_fd[j] != STDERR_FILENO)
-						{
-							close(job.error_fd[j]);
-						}
-					}
-
 					// Ignore SIGTTOU signal (Sent when terminal control is transferred)
 					signal(SIGTTOU, SIG_IGN);
 
@@ -353,15 +361,12 @@ void executeJob(Job job)
 
 int getMaxJobNumber()
 {
-	int max_job_number = 0;
-	for (int i = 0; i < num_jobs; i++)
+	if (num_jobs == 0)
 	{
-		if (jobs[i].job_number > max_job_number)
-		{
-			max_job_number = jobs[i].job_number;
-		}
+		return 0;
 	}
-	return max_job_number;
+
+	return jobs[num_jobs - 1].job_number;
 }
 
 void bringJobToForeground(int job_index)
