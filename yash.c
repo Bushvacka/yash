@@ -17,39 +17,34 @@ char running[] = "Running";
 char stopped[] = "Stopped";
 char done[] = "Done";
 
-// Background jobs
+// Job table
 Job jobs[MAX_JOBS];
 int num_jobs = 0;
 
 int main() {
-    // Parent ignores SIGINT & SIGTSTP
+    // Terminal ignores Ctrl+C, Ctrl+Z, and SIGTTOU (Sent when terminal control is transferred)
     signal(SIGINT, SIG_IGN);
     signal(SIGTSTP, SIG_IGN);
-
-    // Ignore SIGTTOU signal (Sent when terminal control is transferred)
     signal(SIGTTOU, SIG_IGN);
 
-    char line[MAX_LINE_LENGTH + 1] = {0};
+    char line[MAX_LINE_LENGTH + 1] = {0}; // Stores a line of user input
 
     bool done = false;
 
     while (!done) {
-        fflush(stdout);
         printf("# ");                     // Print shell prompt
         fgets(line, sizeof(line), stdin); // Get a line from the user
 
         if (line[0] == '\0') { // Catch EOF characters (Ctrl+D)
             done = true;
-        } else {
-            // Remove newline character from the end of the line
+        } else { // Remove newline character from the end of the line
             for (int i = 0; line[i]; i++) {
                 if (line[i] == '\n' && line[i + 1] == '\0') {
                     line[i--] = '\0';
                 }
             }
 
-            // Handle terminated processes
-            updateJobTable();
+            updateJobTable(); // Check for terminated processes
 
             if (strcmp(line, "fg") == 0) {
                 bringJobToForeground(num_jobs - 1);

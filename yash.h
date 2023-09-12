@@ -6,20 +6,20 @@
 
 typedef struct
 {
-	// Job information
-	pid_t pgid;
-	bool foreground;
-	int job_number;
-	char *status; // Running, Stopped, Done
-	char command[MAX_LINE_LENGTH + 1];
+    // Job information
+    pid_t pgid;
+    bool foreground;
+    int job_number;
+    char *status; // Running, Stopped, Done
+    char command[MAX_LINE_LENGTH + 1];
 
-	// Process information
-	int num_commands;
-	char **commands[2];
-	int command_length[2];
-	int input_fd[2];
-	int output_fd[2];
-	int error_fd[2];
+    // Process information
+    int num_commands;
+    char **commands[2];
+    int command_length[2];
+    int input_fd[2];
+    int output_fd[2];
+    int error_fd[2];
 } Job;
 
 // Creates a job from user input
@@ -59,7 +59,6 @@ void freeJob(Job job);
 // Remove a job from the job table
 void removeJob(int job_index);
 
-
 // Declare kill to avoid compiler warning
-int kill( pid_t pid, int sig );
+int kill(pid_t pid, int sig);
 #endif
